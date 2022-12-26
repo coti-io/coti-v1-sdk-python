@@ -1,8 +1,6 @@
-import random
-
+import logging
 from coti_wallet.crypto_helper import *
 from coti_wallet.node_actions import *
-import logging
 
 tx_manager_logger = logging.getLogger("tx_manager_logger")
 modules_in_out_logger = logging.getLogger("modules_in_out")
@@ -18,8 +16,8 @@ def read_destination_addresses_from_file(destination_addresses_file_name):
         raise e
 
 
-def launch_transactions(full_node_backend_address, trust_score_backend_address, source_seed, source_address_index,
-                        fee_included, transaction_description, currency_hash, amount, destination_addresses_file_name,
+def launch_transactions(full_node_backend_address, trust_score_backend_address, source_seed, source_address_index, fee_source_address_index,
+                        fee_included, transaction_description, currency_hash, fee_currency_hash, amount, destination_addresses_file_name,
                         transaction_type):
     global successful_transactions
     global failed_transactions
@@ -35,23 +33,33 @@ def launch_transactions(full_node_backend_address, trust_score_backend_address, 
     for i in (range(destination_addresses_length)):
         user_private_key, source_address_public_key, source_address_public_key_crc, address_private = \
             KeyAndAddressFromSeed(bytearray.fromhex(str(source_seed)), source_address_index)
-        source_address_balance = get_account_balance(source_address_public_key_crc, full_node_backend_address)
+        source_address_balance = get_address_balance(source_address_public_key_crc,
+                                                     full_node_backend_address, currency_hash)
 
         if source_address_balance < float(amount):
             raise ValueError(
                 'Not enough funds (' + str(amount) + ') in source address (' + str(source_address_balance) + ') !')
 
+        fee_user_private_key, fee_source_address_public_key, fee_source_address_public_key_crc, fee_address_private = \
+            KeyAndAddressFromSeed(bytearray.fromhex(str(source_seed)), fee_source_address_index)
+        fee_source_address_balance = get_address_balance(fee_source_address_public_key_crc, full_node_backend_address,
+                                                         fee_currency_hash)
+        if fee_source_address_balance <= 0:
+            raise ValueError(
+                'No funds in fee source address (' + str(fee_source_address_balance) + ') !')
+
         destination_address = destination_addresses[i]
         destination_address = destination_address.translate(mapping)
-        full_node_fee, input_base_transaction, instant_time, instant_time1, network_fee_data, private_key, \
+        full_node_fee, input_base_transactions, instant_time, instant_time1, network_fee_data, private_key, \
             public_key, receiver_base_transaction, transaction_description, transaction_hash, \
             transaction_trust_score_data = \
             call_apis_to_prepare_a_tx(source_address_public_key_crc, destination_address, amount, currency_hash,
-                                      source_seed, address_private, transaction_description, full_node_backend_address,
-                                      trust_score_backend_address, fee_included)
+                                      fee_currency_hash, source_seed, address_private, transaction_description,
+                                      full_node_backend_address, trust_score_backend_address, fee_included,
+                                      fee_address_private, fee_source_address_public_key_crc)
 
         transaction_creation_result = create_transaction(full_node_backend_address, full_node_fee,
-                                                         input_base_transaction,
+                                                         input_base_transactions,
                                                          instant_time,
                                                          instant_time1,
                                                          network_fee_data, private_key, public_key,
@@ -109,9 +117,11 @@ def read_env_file():
     source_seed = str(env_details.get('SOURCE_SEED')).translate(mapping)
     assert source_seed != ''
     source_address_index = int(env_details.get('SOURCE_ADDRESS_INDEX'))
+    fee_source_address_index = int(env_details.get('FEE_SOURCE_ADDRESS_INDEX'))
     fee_included = str(env_details.get('FEE_INCLUDED')).lower() in ['true']
     transaction_description = str(env_details.get('TRANSACTION_DESCRIPTION')).translate(mapping)
     currency_hash = str(env_details.get('CURRENCY_HASH')).translate(mapping)
+    fee_currency_hash = str(env_details.get('FEE_CURRENCY_HASH')).translate(mapping)
     amount = str(env_details.get('AMOUNT')).translate(mapping)
     logging_module_in_out = str(env_details.get('LOGGING_MODULE_IN_OUT')).translate(mapping).lower() in ['true']
     logging_api_call_times = str(env_details.get('LOGGING_API_CALL_TIMES')).translate(mapping).lower() in ['true']
@@ -119,14 +129,16 @@ def read_env_file():
     transaction_type = env_details.get('TRANSACTION_TYPE').translate(mapping)
 
     return node_manager_address, full_node_backend_address, trust_score_backend_address, source_seed, \
-        source_address_index, fee_included, transaction_description, currency_hash, amount, logging_module_in_out, \
-        logging_api_call_times, destination_addresses_file_name, transaction_type
+        source_address_index, fee_source_address_index, fee_included, transaction_description, currency_hash, \
+           fee_currency_hash, amount, logging_module_in_out, logging_api_call_times, destination_addresses_file_name, \
+           transaction_type
 
 
 def main():
-    node_manager_address, full_node_address, trust_score_address, source_seed, source_address_index, fee_included, \
-        transaction_description, currency_hash, amount, logging_module_in_out, logging_api_call_times, \
-        destination_addresses_file_name, transaction_type = read_env_file()
+    node_manager_address, full_node_address, trust_score_address, source_seed, source_address_index, \
+        fee_source_address_index, fee_included, transaction_description, currency_hash, fee_currency_hash, amount, \
+        logging_module_in_out, logging_api_call_times, destination_addresses_file_name, transaction_type \
+        = read_env_file()
 
     if not str(node_manager_address) == 'None':
         trust_score_node, full_node, financial_server = get_nodes(node_manager_address)
@@ -136,7 +148,8 @@ def main():
         tx_manager_logger.info("fullnode: " + full_node_address + ", trustscore:" + trust_score_address)
 
     launch_transactions(full_node_address, trust_score_address, source_seed, source_address_index,
-                        fee_included, transaction_description, currency_hash, amount, destination_addresses_file_name,
+                        fee_source_address_index, fee_included, transaction_description, currency_hash,
+                        fee_currency_hash, amount, destination_addresses_file_name,
                         transaction_type)
 
 

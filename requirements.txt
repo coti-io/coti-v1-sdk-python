@@ -1,0 +1,4 @@
+urllib3~=1.26.13
+Twisted~=19.2.1
+ecdsa~=0.18.0
+setuptools~=65.6.3
